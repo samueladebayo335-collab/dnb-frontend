@@ -1,127 +1,164 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  requestNotificationPermission,
-  getFcmToken,
-  onForegroundMessage,
-  saveFcmToken,
-  removeFcmToken,
-  PERMISSION_STATE,
-} from "@/lib/actions/push-notifications";
+  isPushSupported,
+  getNotificationPermission,
+  getExistingSubscription,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from "@/lib/push/pushManager";
+import {
+  savePushSubscription,
+  deletePushSubscription,
+  updatePushPreferences,
+} from "@/lib/actions/push-subscription";
 
 /**
- * usePushNotifications
- * --------------------
- * Manages FCM token lifecycle for the current user: permission requests,
- * token persistence, and foreground message handling.
- *
- * Returns a stable API the UI can bind to without worrying about lifecycle
- * details.
- *
- * @param {{ enabled?: boolean }} options  Set `enabled` to false to
- *   temporarily disable push (e.g. while logged out).
+ * Notification categories a user can toggle (issue #197 acceptance criteria).
+ * Kept in one place so the settings UI and the subscribe payload stay in sync.
  */
-export function usePushNotifications({ enabled = true } = {}) {
-  const [permission, setPermission] = useState(
-    typeof Notification !== "undefined" ? Notification.permission : "default"
-  );
-  const [token, setToken] = useState(null);
-  const [isLoaded, setIsLoaded] = useState(false);
-  const tokenRef = useRef(null);
+export const PUSH_NOTIFICATION_TYPES = [
+  {
+    key: "messages",
+    label: "Direct messages",
+    description: "New direct messages sent to you",
+  },
+  {
+    key: "courseUpdates",
+    label: "Course announcements",
+    description: "Announcements from educators you follow",
+  },
+  {
+    key: "spaceReplies",
+    label: "Space replies",
+    description: "New replies in spaces you take part in",
+  },
+  {
+    key: "purchases",
+    label: "Purchase confirmations",
+    description: "Receipts and confirmations for your purchases",
+  },
+];
 
-  // Retrieve or request the FCM token when enabled.
-  const refresh = useCallback(async () => {
-    if (!enabled || typeof window === "undefined") {
-      setIsLoaded(true);
-      return;
-    }
+const PREFERENCES_STORAGE_KEY = "dnb:push-preferences";
 
-    try {
-      if (Notification.permission === "granted") {
-        const t = await getFcmToken();
-        setToken(t);
-        tokenRef.current = t;
-        setPermission(Notification.permission);
-        if (t) await saveFcmToken(t);
-      } else {
-        setPermission(Notification.permission);
-      }
-    } catch (err) {
-      console.error("[push] Failed to initialise FCM:", err.message);
-    } finally {
-      setIsLoaded(true);
-    }
-  }, [enabled]);
+const DEFAULT_PREFERENCES = PUSH_NOTIFICATION_TYPES.reduce((acc, type) => {
+  acc[type.key] = true;
+  return acc;
+}, {});
 
-  // On mount / when enabled changes, fetch the current token.
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // Subscribe to foreground messages and register the SW once.
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") return;
-
-    // Register the dedicated FCM service worker if not already active.
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/firebase-messaging-sw.js")
-        .catch((err) => console.warn("[push] SW registration failed:", err));
-    }
-
-    const unsub = onForegroundMessage((payload) => {
-      // Consumers can extend this or bind to a shared event bus.
-      console.debug("[push] Foreground message:", payload);
-    });
-
-    return unsub;
-  }, [enabled]);
-
-  // Request permission, retrieve token, and persist.
-  const request = useCallback(async () => {
-    const result = await requestNotificationPermission();
-    setPermission(result);
-
-    if (result === PERMISSION_STATE.GRANTED) {
-      const t = await getFcmToken();
-      setToken(t);
-      tokenRef.current = t;
-      if (t) await saveFcmToken(t);
-    }
-
-    return result;
-  }, []);
-
-  // Unregister token on logout / explicit disable.
-  const clear = useCallback(async () => {
-    if (tokenRef.current) {
-      await removeFcmToken(tokenRef.current);
-    }
-    setToken(null);
-    tokenRef.current = null;
-  }, []);
-
-  return {
-    /** Current browser notification permission. */
-    permission,
-    /** Current FCM registration token (null if unavailable). */
-    token,
-    /** Whether the initial token check has completed. */
-    isLoaded,
-    /** Whether the browser supports FCM and permission is granted. */
-    isSubscribed: permission === PERMISSION_STATE.GRANTED && Boolean(token),
-    /** Whether push notifications are usable in this browser. */
-    isSupported: permission !== "default" || typeof Notification !== "undefined",
-    /** Request permission and register for push. */
-    request,
-    /** Re-fetch the token (e.g. after re-login). */
-    refresh,
-    /** Remove the persisted token (e.g. on logout). */
-    clear,
-    /** Enum: "granted" | "denied" | "default" */
-    PERMISSION_STATE,
-  };
+function readStoredPreferences() {
+  if (typeof window === "undefined") return DEFAULT_PREFERENCES;
+  try {
+    const stored = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    if (!stored) return DEFAULT_PREFERENCES;
+    return { ...DEFAULT_PREFERENCES, ...JSON.parse(stored) };
+  } catch {
+    return DEFAULT_PREFERENCES;
+  }
 }
 
-export default usePushNotifications;
+function persistPreferences(preferences) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      PREFERENCES_STORAGE_KEY,
+      JSON.stringify(preferences)
+    );
+  } catch {
+    /* localStorage may be unavailable (private mode) — ignore */
+  }
+}
+
+/**
+ * Encapsulates the full push-notification lifecycle: feature detection,
+ * permission state, subscribe / unsubscribe (syncing with the backend), and
+ * per-type preferences.
+ */
+export function usePushNotifications() {
+  const [supported, setSupported] = useState(false);
+  const [permission, setPermission] = useState("default");
+  const [subscribed, setSubscribed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+
+  // Initialise from the browser once mounted (client-only).
+  useEffect(() => {
+    const ok = isPushSupported();
+    setSupported(ok);
+    setPermission(getNotificationPermission());
+    setPreferences(readStoredPreferences());
+    if (!ok) return;
+    let active = true;
+    getExistingSubscription()
+      .then((sub) => {
+        if (active) setSubscribed(Boolean(sub));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const subscribe = useCallback(async () => {
+    setLoading(true);
+    try {
+      const subscription = await subscribeToPush();
+      const result = await savePushSubscription(subscription, preferences);
+      if (!result.success) {
+        throw new Error(result.error || "Could not save subscription.");
+      }
+      setSubscribed(true);
+      setPermission(getNotificationPermission());
+      return { success: true };
+    } catch (error) {
+      setPermission(getNotificationPermission());
+      return { success: false, error: error?.message };
+    } finally {
+      setLoading(false);
+    }
+  }, [preferences]);
+
+  const unsubscribe = useCallback(async () => {
+    setLoading(true);
+    try {
+      const endpoint = await unsubscribeFromPush();
+      if (endpoint) await deletePushSubscription(endpoint);
+      setSubscribed(false);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error?.message };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const setPreference = useCallback(
+    async (key, value) => {
+      const next = { ...preferences, [key]: value };
+      setPreferences(next);
+      persistPreferences(next);
+      // Only sync to the backend when there is a live subscription to update.
+      if (subscribed) {
+        const subscription = await getExistingSubscription();
+        if (subscription?.endpoint) {
+          await updatePushPreferences(subscription.endpoint, next);
+        }
+      }
+    },
+    [preferences, subscribed]
+  );
+
+  return {
+    supported,
+    permission,
+    subscribed,
+    loading,
+    preferences,
+    types: PUSH_NOTIFICATION_TYPES,
+    subscribe,
+    unsubscribe,
+    setPreference,
+  };
+}

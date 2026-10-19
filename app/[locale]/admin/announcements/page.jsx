@@ -49,12 +49,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { poppins_400, poppins_500, poppins_600 } from "@/lib/config/font.config";
+import { AnnouncementAnalytics } from "@/components/admin/announcement-analytics";
 
 const DRAFT_KEY = "dnb-announcement-draft";
 
 const ROLES = [
   { id: "student", label: "Student" },
-  { id: "educator", label: "Educator" },
+  { id: "mentor", label: "Educator" },
   { id: "admin", label: "Admin" },
   { id: "moderator", label: "Moderator" },
 ];
@@ -280,6 +281,7 @@ export default function AnnouncementsPage() {
         <TabsList className="mb-4">
           <TabsTrigger value="write">Compose</TabsTrigger>
           <TabsTrigger value="preview">Preview</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="write">
@@ -458,6 +460,11 @@ export default function AnnouncementsPage() {
               selectedRoles={form.selectedRoles}
             />
           </div>
+        </TabsContent>
+
+        {/* Analytics tab */}
+        <TabsContent value="analytics">
+          <AnnouncementAnalytics />
         </TabsContent>
       </Tabs>
 

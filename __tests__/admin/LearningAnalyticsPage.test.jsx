@@ -8,7 +8,7 @@
  * branching only.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 vi.mock("@/lib/config/font.config", () => ({
   poppins_400: { className: "" },
@@ -39,8 +39,23 @@ function makeEngagement(overrides = {}) {
     sessionLength: { tracked: false, avgMinutes: null },
     lessonsCompleted: { tracked: false, buckets: [{ range: "1–5", value: 0 }] },
     readingDepth: { tracked: false, buckets: [{ range: "0–25%", value: 0 }] },
+    geographic: {
+      tracked: true,
+      coverage: { label: "Country Data Coverage", value: 68, tracked: true },
+      countries: [
+        { code: "US", name: "United States", learners: 214, revenue: 12840, tracked: true },
+        { code: "GB", name: "United Kingdom", learners: 156, revenue: 9360, tracked: true },
+      ],
+    },
     ...overrides,
   };
+}
+
+function getCardScope(title) {
+  const headings = screen.getAllByText(title);
+  const card = headings[0].closest('[data-slot="card"]');
+  expect(card).not.toBeNull();
+  return within(card);
 }
 
 let LearningAnalyticsPage;
@@ -93,5 +108,63 @@ describe("LearningAnalyticsPage — states", () => {
 
     expect(await screen.findByText(/failed to load analytics/i)).toBeInTheDocument();
     expect(screen.getByText("Service unavailable")).toBeInTheDocument();
+  });
+});
+
+describe("LearningAnalyticsPage — geographic distribution", () => {
+  it("renders the geographic distribution card with coverage percentage", async () => {
+    serviceState.current = () => Promise.resolve(makeEngagement());
+    render(<LearningAnalyticsPage />);
+
+    await screen.findAllByText("Geographic Distribution");
+    const card = getCardScope("Geographic Distribution");
+    expect(card.getByText("Country Data Coverage")).toBeInTheDocument();
+    expect(card.getByText("68%")).toBeInTheDocument();
+    expect(card.getByText("United States")).toBeInTheDocument();
+    expect(card.getByText("United Kingdom")).toBeInTheDocument();
+  });
+
+  it("renders the top-countries table with learner counts and revenue", async () => {
+    serviceState.current = () => Promise.resolve(makeEngagement());
+    render(<LearningAnalyticsPage />);
+
+    await screen.findAllByText("Top Countries");
+    const card = getCardScope("Top Countries");
+    expect(card.getByText("Learners")).toBeInTheDocument();
+    expect(card.getByText("Revenue")).toBeInTheDocument();
+    expect(card.getByText("214")).toBeInTheDocument();
+    expect(card.getByText("$12,840")).toBeInTheDocument();
+    expect(card.getByText("156")).toBeInTheDocument();
+    expect(card.getByText("$9,360")).toBeInTheDocument();
+  });
+
+  it("shows a coverage note when country data is incomplete", async () => {
+    serviceState.current = () => Promise.resolve(makeEngagement());
+    render(<LearningAnalyticsPage />);
+
+    await screen.findAllByText("Geographic Distribution");
+    getCardScope("Geographic Distribution");
+    expect(
+      screen.getByText(/Country data is available for 68% of learners/i)
+    ).toBeInTheDocument();
+  });
+
+  it("renders a not-tracked placeholder when geographic data is unavailable", async () => {
+    serviceState.current = () =>
+      Promise.resolve(
+        makeEngagement({
+          geographic: {
+            tracked: false,
+            coverage: { label: "Country Data Coverage", value: 0, tracked: false },
+            countries: [],
+          },
+        })
+    );
+    render(<LearningAnalyticsPage />);
+
+    await screen.findAllByText("Geographic Distribution");
+    expect(
+      screen.getByText(/Country data from learner profiles isn't instrumented yet/i)
+    ).toBeInTheDocument();
   });
 });

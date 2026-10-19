@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * DismissReportDialog — structured dismissal flow for moderation reports (#293).
+ * DismissReportDialog -- structured dismissal flow for moderation reports (#293).
  *
  * Responsibilities:
  *  - Present the four predefined dismissal reasons via a Select picker.
@@ -115,8 +115,7 @@ export default function DismissReportDialog({
     onOpenChange(false);
   };
 
-  const reasonLabel =
-    DISMISSAL_REASONS.find((r) => r.value === reason)?.label ?? "";
+  const reasonLabel = DISMISSAL_REASONS.find((r) => r.value === reason)?.label ?? "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -144,12 +143,12 @@ export default function DismissReportDialog({
               disabled={submitting}
             >
               <SelectTrigger id="dismiss-reason" className="w-full">
-                <SelectValue placeholder="Select a reason…" />
+                <SelectValue placeholder="Select a reason..." />
               </SelectTrigger>
               <SelectContent>
                 {DISMISSAL_REASONS.map(({ value, label }) => (
                   <SelectItem key={value} value={value}>
-                    {label}
+                  {label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -179,14 +178,10 @@ export default function DismissReportDialog({
                 Notify reporter
               </Label>
               <p className={cn("text-xs text-muted-foreground", poppins_400.className)}>
-                Send a courtesy message letting{" "}
-                <strong>{report?.reporter?.name ?? "the reporter"}</strong> know
-                their report was reviewed.{" "}
+                Send a courtesy message letting <strong>{report?.reporter?.name || "the reporter"}</strong> know their report was reviewed.
                 {!loadingDefault && (
                   <span className="text-muted-foreground/70">
-                    {notify
-                      ? "(on by default — first-time reporter)"
-                      : "(off by default — repeat reporter)"}
+                    {notify ? "(on by default -- first-time reporter)" : "(off by default -- repeat reporter)"}
                   </span>
                 )}
               </p>
